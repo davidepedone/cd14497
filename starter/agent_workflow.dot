@@ -1,0 +1,79 @@
+// Agent workflow diagram for the Beaver's Choice Paper Company multi-agent system.
+// Render with: dot -Tpng agent_workflow.dot -o agent_workflow.png
+digraph agent_workflow {
+    graph [rankdir=TB, fontname="Helvetica", fontsize=12, nodesep=0.35, ranksep=0.55, pad=0.3,
+           label="Beaver's Choice Paper Company - Multi-Agent Workflow (smolagents, 5 agents)\n ",
+           labelloc=t, fontsize=18];
+    node  [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled"];
+    edge  [fontname="Helvetica", fontsize=9, color="#555555"];
+
+    customer [label="Customer request\n(text + request date)", shape=note, fillcolor="#FFF4CC"];
+    reply    [label="Customer reply\n(items, delivery date, price breakdown,\ndiscount rationale, reasons for declined items)\nno costs, cash, ids or internal errors",
+              shape=note, fillcolor="#FFF4CC"];
+
+    orchestrator [label="1. ORCHESTRATOR AGENT\nToolCallingAgent, no DB access\n- extracts request date + deadline\n- delegates: inventory -> quoting -> sales\n- follows get_order_status next_step\n- writes the customer-safe reply",
+                  fillcolor="#D6E4FF", penwidth=2];
+
+    subgraph cluster_inventory {
+        label="2. INVENTORY AGENT (stock + supplier purchases)"; style="rounded,filled"; fillcolor="#E8F5E9"; color="#2E7D32";
+        inventory_agent [label="Inventory Agent\nmaps items, checks feasibility,\ndecides and places reorders", fillcolor="#A5D6A7"];
+        t_find  [label="find_catalog_items\nfuzzy + synonym match of customer wording\nto exact catalog names\n(internal catalog, no helper)", fillcolor="white"];
+        t_snap  [label="get_inventory_snapshot\nall items in stock as of a date\nhelper: get_all_inventory", fillcolor="white"];
+        t_avail [label="check_availability\nstock, shortfall, reorder qty (min-level buffer),\nsupplier ETA vs deadline -> feasible?\nopens the active order draft\nhelpers: get_stock_level, get_supplier_delivery_date", fillcolor="white"];
+        t_buy   [label="place_supplier_orders\nreorders for feasible lines of the draft;\ncash-reserve check, then 'stock_orders' txn\nhelpers: get_cash_balance, create_transaction,\nget_supplier_delivery_date", fillcolor="white"];
+    }
+
+    subgraph cluster_quoting {
+        label="3. QUOTING AGENT (pricing)"; style="rounded,filled"; fillcolor="#FFF3E0"; color="#EF6C00";
+        quoting_agent [label="Quoting Agent\nprices feasible lines,\nexplains discount", fillcolor="#FFCC80"];
+        t_hist  [label="search_past_quotes\nsimilar historical quotes for context\nhelper: search_quote_history", fillcolor="white"];
+        t_quote [label="calculate_quote\nprices the draft's feasible lines:\nlist prices - volume discount\n(1k 5% / 5k 10% / 10k 15%), friendly rounding\n(pricing policy, no helper)", fillcolor="white"];
+    }
+
+    subgraph cluster_sales {
+        label="4. SALES AGENT (transactions)"; style="rounded,filled"; fillcolor="#FCE4EC"; color="#AD1457";
+        sales_agent [label="Sales Agent\nfinalizes the sale once", fillcolor="#F48FB1"];
+        t_cash  [label="check_cash_balance\nsanity check before large orders\nhelper: get_cash_balance", fillcolor="white"];
+        t_sale  [label="finalize_sale\nsells the draft once (idempotent): re-verify stock, integrity check if > $1,000,\n'sales' txn per line at quoted price\nhelpers: get_stock_level, generate_financial_report,\ncreate_transaction", fillcolor="white"];
+    }
+
+    subgraph cluster_advisor {
+        label="5. BUSINESS ADVISOR AGENT (after the run)"; style="rounded,filled"; fillcolor="#EDE7F6"; color="#4527A0";
+        advisor_agent [label="Business Advisor Agent\nreviews results,\nrecommends improvements", fillcolor="#B39DDB"];
+        t_report [label="get_financial_report\ncash, inventory value, stock vs min level, top sellers\nhelper: generate_financial_report", fillcolor="white"];
+        t_txsum  [label="get_transaction_summary\nsales and purchases per item\n(SQL on transactions table)", fillcolor="white"];
+    }
+
+    draft [label="Active order draft (per-request session)\nfeasible lines, reorder qty, delivery dates,\nnot-sold items, quote, sale status", shape=folder, fillcolor="#FFFDE7"];
+    db [label="SQLite database (munder_difflin.db)\ntransactions | inventory | quotes | quote_requests", shape=cylinder, fillcolor="#ECEFF1"];
+    advice [label="advisor_report.txt", shape=note, fillcolor="#FFF4CC"];
+
+    t_status [label="get_order_status\nnext step of the current request +\ncustomer-safe summary (no stock, costs, ids)\n(reads the order draft, no helper)", fillcolor="white"];
+    customer -> orchestrator [label=" request text"];
+    orchestrator -> t_status [label=" () -> next_step, summary", dir=both];
+    t_status -> draft [label=" reads", color="#F9A825", fontcolor="#F9A825", style=dashed, constraint=false];
+    orchestrator -> inventory_agent [label=" 1. descriptions + qty,\n request date, deadline", color="#2E7D32", fontcolor="#2E7D32"];
+    inventory_agent -> orchestrator [label=" feasible lines + delivery dates,\n unavailable lines + reasons", style=dashed, color="#2E7D32", fontcolor="#2E7D32"];
+    orchestrator -> quoting_agent [label=" 2. quote the current order", color="#EF6C00", fontcolor="#EF6C00"];
+    quoting_agent -> orchestrator [label=" line prices, discount,\n total, explanation", style=dashed, color="#EF6C00", fontcolor="#EF6C00"];
+    orchestrator -> sales_agent [label=" 3. finalize current order,\n request date, quoted total", color="#AD1457", fontcolor="#AD1457"];
+    sales_agent -> orchestrator [label=" status, total charged,\n declined items + reasons", style=dashed, color="#AD1457", fontcolor="#AD1457"];
+    orchestrator -> reply [label=" final answer"];
+    {rank=same; orchestrator; t_status; reply}
+
+    inventory_agent -> t_find  [label="descriptions -> candidates", dir=both];
+    inventory_agent -> t_snap  [label="date -> {item: qty}", dir=both];
+    inventory_agent -> t_avail [label="lines, dates, not-sold -> feasibility", dir=both];
+    inventory_agent -> t_buy   [label="() -> ordered/refused", dir=both];
+    quoting_agent -> t_hist    [label="term -> past quotes", dir=both];
+    quoting_agent -> t_quote   [label="() -> priced quote", dir=both];
+    sales_agent -> t_cash      [label="date -> balance", dir=both];
+    sales_agent -> t_sale      [label="() -> confirmation + declined items", dir=both];
+    advisor_agent -> t_report  [label="date -> report", dir=both];
+    advisor_agent -> t_txsum   [label="date -> summary", dir=both];
+
+    {t_snap t_avail t_buy t_hist t_cash t_sale t_report t_txsum} -> db [style=dotted, arrowhead=none, color="#90A4AE"];
+    advisor_agent -> advice [label=" recommendations"];
+    t_avail -> draft [label=" creates", color="#F9A825", fontcolor="#F9A825", penwidth=1.5];
+    {t_buy t_quote t_sale} -> draft [label=" reads/updates", color="#F9A825", fontcolor="#F9A825", style=dashed, constraint=false];
+}

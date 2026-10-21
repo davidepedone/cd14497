@@ -4,10 +4,15 @@ import os
 import time
 import dotenv
 import ast
+import json
+import math
+import re
+from difflib import SequenceMatcher
 from sqlalchemy.sql import text
 from datetime import datetime, timedelta
 from typing import Dict, List, Union
 from sqlalchemy import create_engine, Engine
+from smolagents import OpenAIServerModel, ToolCallingAgent, tool
 
 # Create an SQLite database
 db_engine = create_engine("sqlite:///munder_difflin.db")
@@ -591,29 +596,817 @@ def search_quote_history(search_terms: List[str], limit: int = 5) -> List[Dict]:
 
 # Set up and load your env parameters and instantiate your model.
 
+dotenv.load_dotenv()
 
-"""Set up tools for your agents to use, these should be methods that combine the database functions above
- and apply criteria to them to ensure that the flow of the system is correct."""
+OPENAI_API_BASE = "https://openai.vocareum.com/v1"
+MODEL_ID = os.getenv("MODEL_ID", "gpt-4o-mini")
 
 
+def build_model() -> OpenAIServerModel:
+    """Create the OpenAI-compatible model shared by every agent in the system."""
+    api_key = os.getenv("UDACITY_OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("UDACITY_OPENAI_API_KEY is missing: add it to a .env file next to this script.")
+    # One tool call per step keeps the delegation order (inventory -> quoting -> sales) strictly sequential.
+    return OpenAIServerModel(model_id=MODEL_ID, api_base=OPENAI_API_BASE, api_key=api_key,
+                             temperature=0, parallel_tool_calls=False)
+
+
+########################
+# Business policy
+########################
+
+# Catalog prices in `paper_supplies` are customer list prices. The supplier sells to us at a
+# wholesale discount, which is where the company's margin comes from. Never shown to customers.
+WHOLESALE_COST_RATIO = 0.60
+
+# Supplier orders are refused if they would push cash below this safety reserve.
+MIN_CASH_RESERVE = 5000.0
+
+# Orders whose quoted total exceeds this value trigger a full financial integrity check before the sale.
+LARGE_ORDER_THRESHOLD = 1000.0
+
+# Volume discount tiers, applied on the total number of units in the order: (min_units, rate).
+BULK_DISCOUNT_TIERS = [
+    (10000, 0.15),
+    (5000, 0.10),
+    (1000, 0.05),
+    (0, 0.0),
+]
+
+# Sheets per ream, used when customers order paper by the ream.
+SHEETS_PER_REAM = 500
+
+CATALOG = {item["item_name"]: item for item in paper_supplies}
+
+# Shared order drafts, keyed by order id. Each customer request is handled as a session with one
+# active draft: the inventory agent opens it, then supplier orders, quoting and the sale all work on
+# that draft, so exact item names, quantities and ids never have to pass between LLM agents.
+ORDER_DRAFTS: Dict[str, Dict] = {}
+ACTIVE_ORDER: Dict[str, Union[str, None]] = {"order_id": None}
+
+# Common customer wording that string similarity alone maps poorly: phrase -> catalog item.
+CATALOG_SYNONYMS = {
+    "printer paper": "Standard copy paper",
+    "printing paper": "Standard copy paper",
+    "copy paper": "Standard copy paper",
+    "white paper": "Standard copy paper",
+    "poster board": "Large poster paper (24x36 inches)",
+    "napkin": "Paper napkins",
+    "streamer": "Party streamers",
+    "washi": "Decorative adhesive tape (washi tape)",
+    "cardboard": "Cardstock",
+    "construction paper": "Construction paper",
+    "envelope": "Envelopes",
+    "flyer": "Flyers",
+}
+
+
+########################
+# Internal helpers (not exposed to the LLM)
+########################
+
+def _validate_iso_date(date_str: str) -> str:
+    """Return the YYYY-MM-DD part of `date_str`, raising ValueError if it is not a valid ISO date."""
+    date_part = str(date_str).strip().split("T")[0]
+    datetime.strptime(date_part, "%Y-%m-%d")
+    return date_part
+
+
+def _normalize_order_lines(items: List[Dict]) -> List[Dict]:
+    """
+    Coerce LLM-provided order lines into [{'item_name': str, 'quantity': int}] with positive quantities,
+    converting reams to sheets and merging repeated items into a single line.
+    """
+    quantities: Dict[str, int] = {}
+    for raw in items:
+        name = str(raw.get("item_name", "")).strip()
+        quantity = int(float(raw.get("quantity", 0)))
+        if str(raw.get("unit", "")).strip().lower() in {"ream", "reams"}:
+            quantity *= SHEETS_PER_REAM
+        if name and quantity > 0:
+            quantities[name] = quantities.get(name, 0) + quantity
+    return [{"item_name": name, "quantity": quantity} for name, quantity in quantities.items()]
+
+
+def _min_stock_levels() -> Dict[str, int]:
+    """Read the reorder threshold of every item tracked in the `inventory` reference table."""
+    inventory_df = pd.read_sql("SELECT item_name, min_stock_level FROM inventory", db_engine)
+    return dict(zip(inventory_df["item_name"], inventory_df["min_stock_level"].astype(int)))
+
+
+def _active_draft() -> Union[Dict, None]:
+    """Return the order draft of the customer request currently being handled, if any."""
+    order_id = ACTIVE_ORDER["order_id"]
+    return ORDER_DRAFTS.get(order_id) if order_id else None
+
+
+def _rank_catalog_matches(description: str) -> List[tuple]:
+    """
+    Score every catalog item against a customer description and return [(score, item_name)],
+    best first, keeping only plausible matches. Combines token overlap, string similarity and
+    a boost for known customer synonyms.
+    """
+    query = description.lower()
+    query_tokens = set(re.findall(r"[a-z0-9]+", query))
+    # "A4 paper" is a size-specific item: never offer it for another paper size (A3, A5).
+    other_size_requested = bool(query_tokens & {"a3", "a5"})
+    synonym_hits = {target for phrase, target in CATALOG_SYNONYMS.items() if phrase in query}
+    # Plain A4 office paper is its own catalog item rather than generic copy paper.
+    if "a4" in query_tokens and "Standard copy paper" in synonym_hits:
+        synonym_hits = (synonym_hits - {"Standard copy paper"}) | {"A4 paper"}
+
+    scored = []
+    for name in CATALOG:
+        if other_size_requested and name == "A4 paper":
+            continue
+        name_lower = name.lower()
+        name_tokens = set(re.findall(r"[a-z0-9]+", name_lower))
+        overlap = len(query_tokens & name_tokens) / max(len(name_tokens), 1)
+        ratio = SequenceMatcher(None, query, name_lower).ratio()
+        score = 0.6 * overlap + 0.4 * ratio + (1.0 if name in synonym_hits else 0.0)
+        scored.append((round(score, 3), name))
+    scored.sort(reverse=True)
+    return [(score, name) for score, name in scored if score >= 0.35]
+
+
+def _feasible_lines(draft: Dict) -> List[Dict]:
+    """Return the feasible lines of an order draft as [{'item_name', 'quantity'}]."""
+    return [{"item_name": line["item_name"], "quantity": line["quantity"]}
+            for line in draft["lines"] if line["feasible"]]
+
+
+def _declined_items(draft: Dict) -> List[Dict]:
+    """List what the customer asked for but will not receive, with a customer-friendly reason."""
+    declined = [{"item": description, "reason": "not a product we carry"} for description in draft["not_sold"]]
+    declined += [{"item": line["item_name"], "reason": line.get("reason", "cannot be supplied")}
+                 for line in draft["lines"] if not line["feasible"]]
+    return declined
+
+
+def _bulk_discount_rate(total_units: int) -> float:
+    """Return the volume discount rate that applies to an order of `total_units` units."""
+    for min_units, rate in BULK_DISCOUNT_TIERS:
+        if total_units >= min_units:
+            return rate
+    return 0.0
+
+
+def _price_order(lines: List[Dict]) -> Dict:
+    """
+    Deterministically price an order from catalog list prices.
+
+    Applies the volume discount tier, then rounds the total down to a whole dollar
+    (customer-friendly rounding, as in the historical quotes) when the total is above $10.
+    Each line receives its share of the final total so that sales transactions add up exactly.
+    """
+    total_units = sum(line["quantity"] for line in lines)
+    discount_rate = _bulk_discount_rate(total_units)
+
+    priced_lines = []
+    for line in lines:
+        unit_price = CATALOG[line["item_name"]]["unit_price"]
+        list_total = round(unit_price * line["quantity"], 2)
+        priced_lines.append({
+            "item_name": line["item_name"],
+            "quantity": line["quantity"],
+            "unit_price": unit_price,
+            "list_total": list_total,
+        })
+
+    subtotal = round(sum(line["list_total"] for line in priced_lines), 2)
+    volume_discount = round(subtotal * discount_rate, 2)
+    discounted = round(subtotal - volume_discount, 2)
+    final_total = float(math.floor(discounted)) if discounted > 10 else discounted
+
+    # Spread the final total across lines proportionally; the last line absorbs rounding cents.
+    allocated = 0.0
+    for index, line in enumerate(priced_lines):
+        if index == len(priced_lines) - 1:
+            line["line_total"] = round(final_total - allocated, 2)
+        else:
+            share = line["list_total"] / subtotal if subtotal else 0.0
+            line["line_total"] = round(final_total * share, 2)
+            allocated += line["line_total"]
+
+    return {
+        "lines": priced_lines,
+        "total_units": total_units,
+        "subtotal": subtotal,
+        "discount_rate": discount_rate,
+        "volume_discount": volume_discount,
+        "rounding_credit": round(discounted - final_total, 2),
+        "total": final_total,
+    }
+
+
+########################
 # Tools for inventory agent
+########################
+
+@tool
+def find_catalog_items(descriptions: list[str]) -> str:
+    """
+    Match free-text product descriptions from a customer request to exact catalog item names.
+
+    Returns, for each description, up to three candidate catalog names ranked by similarity.
+    Use the exact returned names in every other tool. A description with no good candidate
+    is something the company does not sell.
+
+    Args:
+        descriptions: Product descriptions as written by the customer, e.g. ["A4 glossy paper", "balloons"].
+    """
+    results = {}
+    for description in descriptions:
+        results[description] = [
+            {"item_name": name, "match_score": score} for score, name in _rank_catalog_matches(description)[:3]
+        ]
+    return json.dumps(results, indent=2)
 
 
+@tool
+def get_inventory_snapshot(as_of_date: str) -> str:
+    """
+    List every item currently in stock with its quantity, as of a date.
+
+    Args:
+        as_of_date: Date in YYYY-MM-DD format.
+    """
+    try:
+        as_of_date = _validate_iso_date(as_of_date)
+    except ValueError:
+        return "ERROR: as_of_date must be in YYYY-MM-DD format."
+    inventory = get_all_inventory(as_of_date)
+    return json.dumps({name: int(stock) for name, stock in inventory.items()}, indent=2)
+
+
+@tool
+def check_availability(items: list[dict], request_date: str, deadline: str, not_sold: list[str]) -> str:
+    """
+    Open an order draft and check whether each line can be delivered by the customer's deadline.
+
+    For each line it reports current stock, any shortfall, the supplier quantity to reorder
+    (shortfall plus a buffer that keeps stock above the minimum level), the supplier delivery
+    date and whether the line is feasible. The result becomes the active order of the current
+    customer request, which supplier orders, quoting and the sale then work on.
+
+    Args:
+        items: Order lines, each an object {"item_name": exact catalog name, "quantity": number as the customer wrote it, "unit": "sheets", "units" or "reams"}.
+        request_date: Date the customer placed the request, YYYY-MM-DD.
+        deadline: Delivery date requested by the customer, YYYY-MM-DD.
+        not_sold: The customer's descriptions of requested products we do not sell (empty list if none).
+    """
+    try:
+        request_date = _validate_iso_date(request_date)
+        deadline = _validate_iso_date(deadline)
+    except ValueError:
+        return "ERROR: request_date and deadline must be in YYYY-MM-DD format."
+
+    min_levels = _min_stock_levels()
+    report = []
+    for line in _normalize_order_lines(items):
+        name, quantity = line["item_name"], line["quantity"]
+        if name not in CATALOG:
+            report.append({"item_name": name, "quantity": quantity, "feasible": False,
+                           "reason": "not a catalog item - call find_catalog_items for the exact name"})
+            continue
+
+        stock = int(get_stock_level(name, request_date)["current_stock"].iloc[0])
+        shortfall = max(0, quantity - stock)
+        min_level = min_levels.get(name, 0)
+        # Reorder enough to cover the order and leave at least the minimum stock level afterwards.
+        reorder_quantity = max(0, quantity + min_level - stock)
+
+        if reorder_quantity > 0:
+            supplier_date = get_supplier_delivery_date(request_date, reorder_quantity)
+            # If the buffered order would arrive too late, fall back to ordering only the shortfall.
+            if shortfall > 0 and supplier_date > deadline:
+                reorder_quantity = shortfall
+                supplier_date = get_supplier_delivery_date(request_date, reorder_quantity)
+        else:
+            supplier_date = None
+
+        delivery_date = supplier_date if shortfall > 0 else request_date
+        feasible = delivery_date <= deadline
+        entry = {
+            "item_name": name,
+            "quantity": quantity,
+            "current_stock": stock,
+            "shortfall": shortfall,
+            "reorder_quantity": reorder_quantity,
+            "supplier_delivery_date": supplier_date,
+            "customer_delivery_date": delivery_date,
+            "feasible": feasible,
+        }
+        if not feasible:
+            entry["reason"] = (f"this quantity cannot be delivered by the requested date "
+                               f"(earliest possible delivery: {supplier_date})")
+        report.append(entry)
+
+    # Drop "not sold" descriptions that actually match an item of this order (LLM double counting).
+    ordered_items = {line["item_name"] for line in report}
+    not_sold = [str(description) for description in not_sold
+                if not any(name in ordered_items for _, name in _rank_catalog_matches(str(description))[:1])]
+
+    order_id = f"ORD-{len(ORDER_DRAFTS) + 1:04d}"
+    ORDER_DRAFTS[order_id] = {
+        "request_date": request_date,
+        "deadline": deadline,
+        "lines": report,
+        "not_sold": not_sold,
+        "supplier_orders_placed": False,
+        "status": "assessed",
+    }
+    ACTIVE_ORDER["order_id"] = order_id
+    needs_restock = any(line["feasible"] and line.get("reorder_quantity", 0) > 0 for line in report)
+    next_step = ("REQUIRED: call place_supplier_orders before answering."
+                 if needs_restock else "No supplier order needed.")
+    return json.dumps({"order_id": order_id, "lines": report, "not_sold": not_sold, "next_step": next_step},
+                      indent=2)
+
+
+@tool
+def place_supplier_orders() -> str:
+    """
+    Buy from the supplier the reorder quantities of every feasible line of the active order.
+
+    Records one 'stock_orders' transaction per item on the request date. Each purchase is checked
+    against the company's cash reserve first; a refused purchase makes its line infeasible
+    when the order cannot be served from current stock.
+    """
+    draft = _active_draft()
+    if draft is None:
+        return "ERROR: no active order - call check_availability first."
+    order_id = ACTIVE_ORDER["order_id"]
+    if draft["supplier_orders_placed"]:
+        return "Supplier orders were already placed for this order; nothing to do."
+
+    order_date = draft["request_date"]
+    results = []
+    for line in draft["lines"]:
+        if not line["feasible"] or line.get("reorder_quantity", 0) <= 0:
+            continue
+        name, quantity = line["item_name"], line["reorder_quantity"]
+        cost = round(quantity * CATALOG[name]["unit_price"] * WHOLESALE_COST_RATIO, 2)
+        if get_cash_balance(order_date) - cost < MIN_CASH_RESERVE:
+            if line["shortfall"] > 0:
+                line["feasible"] = False
+                line["reason"] = "insufficient supply available for this quantity"
+            results.append({"item_name": name, "quantity": quantity, "status": "refused",
+                            "reason": "purchase would breach the cash reserve"})
+            continue
+        transaction_id = create_transaction(name, "stock_orders", quantity, cost, order_date)
+        results.append({
+            "item_name": name,
+            "quantity": quantity,
+            "status": "ordered",
+            "transaction_id": transaction_id,
+            "expected_arrival": get_supplier_delivery_date(order_date, quantity),
+        })
+
+    draft["supplier_orders_placed"] = True
+    feasible = [line["item_name"] for line in draft["lines"] if line["feasible"]]
+    return json.dumps({"order_id": order_id, "purchases": results, "feasible_items": feasible}, indent=2)
+
+
+########################
 # Tools for quoting agent
+########################
+
+@tool
+def search_past_quotes(search_term: str) -> str:
+    """
+    Search historical quotes whose request or explanation mentions a term (e.g. "cardstock", "ceremony").
+
+    Use single words or short phrases; call several times for different terms.
+
+    Args:
+        search_term: Keyword to look for in past requests and quote explanations.
+    """
+    matches = search_quote_history([search_term], limit=3)
+    summary = [
+        {
+            "total_amount": match["total_amount"],
+            "order_size": match["order_size"],
+            "event_type": match["event_type"],
+            "quote_explanation": match["quote_explanation"],
+        }
+        for match in matches
+        if match["quote_explanation"] != "Error parsing response."
+    ]
+    return json.dumps(summary, indent=2) if summary else "No past quotes found for this term."
 
 
-# Tools for ordering agent
+@tool
+def calculate_quote() -> str:
+    """
+    Price the feasible lines of the active order from catalog list prices, applying the volume discount policy.
+
+    Discount tiers on total units ordered: 1,000+ units 5%, 5,000+ units 10%, 10,000+ units 15%.
+    Totals above $10 are rounded down to a whole dollar in the customer's favor.
+    """
+    draft = _active_draft()
+    if draft is None:
+        return "ERROR: the inventory check has not been done for this request yet."
+    order_id = ACTIVE_ORDER["order_id"]
+    lines = _feasible_lines(draft)
+    if not lines:
+        return "This order has no feasible lines to price."
+    quote = _price_order(lines)
+    draft["quote"] = quote
+    return json.dumps({"order_id": order_id, **quote}, indent=2)
+
+
+########################
+# Tools for sales agent
+########################
+
+@tool
+def finalize_sale() -> str:
+    """
+    Complete the sale of the active order: verify stock, record one 'sales' transaction per line, confirm.
+
+    Prices are recomputed with the same policy as calculate_quote, so the charged total always
+    matches the quote. Lines without enough stock on the sale date are not sold. Large orders
+    get a financial integrity check (cash and inventory reconciliation) before being recorded.
+    An order can only be finalized once.
+    """
+    draft = _active_draft()
+    if draft is None:
+        return "ERROR: the inventory check has not been done for this request yet."
+    order_id = ACTIVE_ORDER["order_id"]
+    if draft["status"] == "completed":
+        return json.dumps({"status": "already_completed", **draft["sale"]}, indent=2)
+
+    sale_date = draft["request_date"]
+    sellable, rejected = [], []
+    for line in _feasible_lines(draft):
+        stock = int(get_stock_level(line["item_name"], sale_date)["current_stock"].iloc[0])
+        if stock < line["quantity"]:
+            rejected.append({**line, "reason": "insufficient stock on the sale date"})
+        else:
+            sellable.append(line)
+
+    declined = _declined_items(draft) + [
+        {"item": line["item_name"], "reason": line["reason"]} for line in rejected
+    ]
+    if not sellable:
+        draft["status"] = "not_completed"
+        return json.dumps({"status": "not_completed", "declined_items": declined}, indent=2)
+
+    quote = _price_order(sellable)
+    if quote["total"] > LARGE_ORDER_THRESHOLD:
+        report = generate_financial_report(sale_date)
+        if report["cash_balance"] < 0 or report["inventory_value"] < 0:
+            return json.dumps({"status": "on_hold", "reason": "financial integrity check failed"}, indent=2)
+
+    for line in quote["lines"]:
+        line["transaction_id"] = create_transaction(
+            line["item_name"], "sales", line["quantity"], line["line_total"], sale_date
+        )
+
+    delivery_dates = {line["item_name"]: line["customer_delivery_date"]
+                      for line in draft["lines"] if line["feasible"]}
+    draft["status"] = "completed"
+    draft["sale"] = {
+        "order_id": order_id,
+        "sale_date": sale_date,
+        "lines": [{**{k: line[k] for k in ("item_name", "quantity", "line_total", "transaction_id")},
+                   "delivery_date": delivery_dates[line["item_name"]]}
+                  for line in quote["lines"]],
+        "subtotal": quote["subtotal"],
+        "discount_rate": quote["discount_rate"],
+        "volume_discount": quote["volume_discount"],
+        "rounding_credit": quote["rounding_credit"],
+        "total_charged": quote["total"],
+        "declined_items": declined,
+    }
+    return json.dumps({"status": "completed", **draft["sale"]}, indent=2)
+
+@tool
+def check_cash_balance(as_of_date: str) -> str:
+    """
+    Return the company's cash balance as of a date (internal use only, never share with customers).
+
+    Args:
+        as_of_date: Date in YYYY-MM-DD format.
+    """
+    try:
+        as_of_date = _validate_iso_date(as_of_date)
+    except ValueError:
+        return "ERROR: as_of_date must be in YYYY-MM-DD format."
+    return f"Cash balance as of {as_of_date}: ${get_cash_balance(as_of_date):,.2f}"
+
+
+########################
+# Tools for business advisor agent
+########################
+
+@tool
+def get_financial_report(as_of_date: str) -> str:
+    """
+    Produce the company financial report: cash, inventory value, total assets, stock per item and top sellers.
+
+    Args:
+        as_of_date: Date in YYYY-MM-DD format.
+    """
+    try:
+        as_of_date = _validate_iso_date(as_of_date)
+    except ValueError:
+        return "ERROR: as_of_date must be in YYYY-MM-DD format."
+    report = generate_financial_report(as_of_date)
+    min_levels = _min_stock_levels()
+    for entry in report["inventory_summary"]:
+        entry["stock"] = int(entry["stock"])
+        entry["min_stock_level"] = min_levels.get(entry["item_name"])
+    return json.dumps(report, indent=2, default=str)
+
+
+@tool
+def get_transaction_summary(as_of_date: str) -> str:
+    """
+    Summarize all sales and supplier purchases after the opening day, per item, up to a date.
+
+    Args:
+        as_of_date: Date in YYYY-MM-DD format.
+    """
+    try:
+        as_of_date = _validate_iso_date(as_of_date)
+    except ValueError:
+        return "ERROR: as_of_date must be in YYYY-MM-DD format."
+    query = """
+        SELECT item_name, transaction_type, COUNT(*) AS transactions,
+               SUM(units) AS units, ROUND(SUM(price), 2) AS amount
+        FROM transactions
+        WHERE item_name IS NOT NULL
+          AND transaction_date > '2025-01-01T00:00:00'
+          AND transaction_date <= :as_of_date
+        GROUP BY item_name, transaction_type
+        ORDER BY transaction_type, amount DESC
+    """
+    summary = pd.read_sql(query, db_engine, params={"as_of_date": as_of_date})
+    return summary.to_string(index=False) if not summary.empty else "No transactions recorded yet."
+
+
+########################
+# Tools for orchestrator agent
+########################
+
+@tool
+def get_order_status() -> str:
+    """
+    Report the progress of the current customer request and the next action to take.
+
+    Also returns a customer-safe summary (items, quantities, delivery dates, prices, declined items
+    with reasons) to base the reply on. It contains no internal data such as stock levels or costs.
+    """
+    draft = _active_draft()
+    if draft is None:
+        return json.dumps({"next_step": "Call inventory_agent to assess the request."})
+
+    feasible = [line for line in draft["lines"] if line["feasible"]]
+    if not feasible:
+        next_step = "Nothing can be supplied: reply to the customer now, explaining every declined item."
+    elif "quote" not in draft:
+        next_step = "Call quoting_agent to quote the current order."
+    elif draft["status"] == "assessed":
+        next_step = (f"Call sales_agent to finalize the current order (request date {draft['request_date']}, "
+                     f"quoted total ${draft['quote']['total']:,.2f}).")
+    else:
+        next_step = "Order processed: reply to the customer now using customer_summary."
+
+    summary = {"requested_delivery_by": draft["deadline"]}
+    if draft["status"] == "completed":
+        sale = draft["sale"]
+        summary.update({
+            "items_confirmed": [{k: line[k] for k in ("item_name", "quantity", "line_total", "delivery_date")}
+                                for line in sale["lines"]],
+            "subtotal": sale["subtotal"],
+            "volume_discount_rate": sale["discount_rate"],
+            "volume_discount": sale["volume_discount"],
+            "rounding_credit": sale["rounding_credit"],
+            "total_charged": sale["total_charged"],
+            "declined_items": sale["declined_items"],
+        })
+    else:
+        summary.update({
+            "items_feasible": [{"item_name": line["item_name"], "quantity": line["quantity"],
+                                "delivery_date": line["customer_delivery_date"]} for line in feasible],
+            "declined_items": _declined_items(draft),
+        })
+    return json.dumps({"status": draft["status"], "next_step": next_step, "customer_summary": summary}, indent=2)
+
+
+########################
+# Terminal progress animation
+########################
+
+# smolagents log level: 0 shows only errors so the progress animation stays readable; 1 shows full agent traces.
+AGENT_VERBOSITY = int(os.getenv("AGENT_VERBOSITY", "0"))
+
+AGENT_LABELS = {
+    "orchestrator": "Orchestrator",
+    "inventory_agent": "Inventory",
+    "quoting_agent": "Quoting",
+    "sales_agent": "Sales",
+    "business_advisor_agent": "Advisor",
+}
+
+# Completed tool calls in plain words. smolagents reports a step once it has finished, so each line
+# describes something that has just happened.
+TOOL_ACTIVITIES = {
+    "inventory_agent": "received the inventory assessment",
+    "quoting_agent": "received the quote",
+    "sales_agent": "received the sale confirmation",
+    "get_order_status": "checked the order status",
+    "find_catalog_items": "matched products to the catalog",
+    "get_inventory_snapshot": "reviewed current inventory",
+    "check_availability": "checked stock and delivery deadline",
+    "place_supplier_orders": "ordered missing stock from the supplier",
+    "search_past_quotes": "looked up similar past quotes",
+    "calculate_quote": "applied prices and volume discount",
+    "check_cash_balance": "ran a pre-sale sanity check",
+    "finalize_sale": "recorded the sale",
+    "get_financial_report": "read the financial report",
+    "get_transaction_summary": "reviewed all transactions",
+    "final_answer": "finished",
+}
+
+
+def _animate_line(text: str, delay: float = 0.01) -> None:
+    """Print a line with a typewriter effect when running in a terminal, instantly otherwise."""
+    if not os.isatty(1):
+        print(text)
+        return
+    for char in text:
+        print(char, end="", flush=True)
+        time.sleep(delay)
+    print()
+
+
+def show_agent_progress(memory_step, agent=None) -> None:
+    """smolagents step callback: show which agent did what, as each step completes."""
+    tool_calls = getattr(memory_step, "tool_calls", None) or []
+    label = AGENT_LABELS.get(getattr(agent, "name", ""), "Agent")
+    indent = "  " if getattr(agent, "name", "") == "orchestrator" else "      "
+    for tool_call in tool_calls:
+        activity = TOOL_ACTIVITIES.get(tool_call.name, tool_call.name)
+        _animate_line(f"{indent}[{label}] {activity}")
 
 
 # Set up your agents and create an orchestration agent that will manage them.
+
+INVENTORY_AGENT_INSTRUCTIONS = """
+You are the inventory manager of a paper supply company. You own stock levels and supplier purchases.
+Given a customer request, its request date and its delivery deadline:
+1. Call find_catalog_items with every product the customer mentions and pick the exact catalog name
+   for each, normally the top candidate. Size qualifiers (A3, A5, 8.5x11) are not catalog items: the
+   paper type matters (e.g. "A3 matte paper" -> "Matte paper"). A size with no paper type (e.g. plain
+   "A3 paper") is NOT SOLD, since we only stock A4 as a size. If no candidate genuinely is the same
+   kind of product (e.g. balloons, tickets, finished posters), the item is NOT SOLD. Never substitute a
+   different product (tickets are not sticky notes).
+2. Call check_availability ONCE with all sold lines, and the customer's descriptions of NOT SOLD
+   products in not_sold. Pass the quantity exactly as the customer wrote it with its unit
+   ("sheets", "units" or "reams"); never convert quantities yourself.
+3. Follow its next_step: if it says REQUIRED, call place_supplier_orders.
+Final answer: each feasible item (customer description, catalog name, quantity, delivery date) and each
+unavailable item with the customer's own description and a customer-friendly reason (not sold by us /
+cannot be delivered by the deadline / insufficient supply). Never mention cash or stock levels.
+"""
+
+QUOTING_AGENT_INSTRUCTIONS = """
+You are the quoting specialist of a paper supply company. The inventory check for the current customer
+request has already been done; you price its feasible items.
+1. Call search_past_quotes for one or two relevant terms (main product, event type) to see how similar
+   orders were priced historically.
+2. Call calculate_quote once. Its numbers are final: never change prices or totals.
+Final answer: the per-line prices, subtotal, volume discount (rate and amount), the small rounding
+credit if any (totals are rounded down to a whole dollar in the customer's favor), final total, and a short
+customer-friendly explanation of the pricing (why the discount applies, comparison with similar past
+orders if useful). Never mention costs, margins or supplier prices.
+"""
+
+SALES_AGENT_INSTRUCTIONS = f"""
+You are the sales clerk who completes transactions for a paper supply company. The current customer
+request has been checked and quoted; you receive its request date and quoted total.
+1. If the quoted total is above ${LARGE_ORDER_THRESHOLD:,.0f}, call check_cash_balance on the request
+   date first as a sanity check.
+2. Call finalize_sale exactly once.
+Final answer: the sale status, charged total, lines sold with delivery dates, and every declined item
+with its reason, exactly as returned by finalize_sale.
+"""
+
+ADVISOR_AGENT_INSTRUCTIONS = """
+You are a business advisor for a paper supply company. Use get_financial_report and
+get_transaction_summary to analyze performance, then give 3-5 concrete, prioritized recommendations
+to improve revenue and operational efficiency (stock levels, reorder policy, pricing, product range).
+Base every recommendation on numbers from the tools.
+"""
+
+ORCHESTRATOR_INSTRUCTIONS = """
+You are the customer service orchestrator of Beaver's Choice Paper Company. You never touch the
+database yourself: you coordinate three specialists, each called at most once per request, in order.
+1. Extract the request date (given at the end) and the delivery deadline (from the text; if missing,
+   use 14 days after the request date). Dates are YYYY-MM-DD.
+2. Call inventory_agent with the full list of products and quantities exactly as the customer wrote
+   them, plus the request date and the deadline.
+3. Then call get_order_status and do exactly what its next_step says. Call get_order_status again
+   after every specialist, until it tells you to reply. If even one item is feasible, the order MUST be
+   quoted (quoting_agent) and finalized (sales_agent) for those items, even if other items are declined.
+Final answer = a reply addressed to the customer, written ONLY from get_order_status customer_summary:
+- the confirmed items with quantities, line prices and delivery dates,
+- subtotal, volume discount (rate and why: bulk order tiers 1,000/5,000/10,000+ units), rounding
+  credit if any, and the total charged,
+- EVERY declined item with its reason. Never drop one.
+Never reveal internal information: stock levels, costs, margins, cash, supplier details, order or
+transaction ids, tool names or error messages. Sign as "Beaver's Choice Paper Company - Customer Service".
+"""
+
+
+def build_agent_system(model: OpenAIServerModel) -> Dict[str, ToolCallingAgent]:
+    """
+    Create the five agents: the orchestrator with its three managed operational agents,
+    plus the business advisor that reviews the company's results after the run.
+    """
+    inventory_agent = ToolCallingAgent(
+        tools=[find_catalog_items, get_inventory_snapshot, check_availability, place_supplier_orders],
+        model=model,
+        name="inventory_agent",
+        description=(
+            "Inventory manager. Maps customer product descriptions to catalog items, checks stock and "
+            "delivery feasibility against a deadline, and buys missing stock from the supplier. "
+            "Give it the product descriptions with quantities, the request date and the deadline."
+        ),
+        instructions=INVENTORY_AGENT_INSTRUCTIONS,
+        max_steps=8,
+        verbosity_level=AGENT_VERBOSITY,
+        step_callbacks=[show_agent_progress],
+    )
+    quoting_agent = ToolCallingAgent(
+        tools=[search_past_quotes, calculate_quote],
+        model=model,
+        name="quoting_agent",
+        description=(
+            "Quoting specialist. Prices order lines (exact catalog names and quantities) with the "
+            "volume discount policy and explains the price using past quotes."
+        ),
+        instructions=QUOTING_AGENT_INSTRUCTIONS,
+        max_steps=6,
+        verbosity_level=AGENT_VERBOSITY,
+        step_callbacks=[show_agent_progress],
+    )
+    sales_agent = ToolCallingAgent(
+        tools=[check_cash_balance, finalize_sale],
+        model=model,
+        name="sales_agent",
+        description=(
+            "Sales clerk. Records the sale of approved order lines (exact catalog names and quantities) "
+            "on the request date and returns the confirmation."
+        ),
+        instructions=SALES_AGENT_INSTRUCTIONS,
+        max_steps=4,
+        verbosity_level=AGENT_VERBOSITY,
+        step_callbacks=[show_agent_progress],
+    )
+    orchestrator = ToolCallingAgent(
+        tools=[get_order_status],
+        model=model,
+        managed_agents=[inventory_agent, quoting_agent, sales_agent],
+        name="orchestrator",
+        instructions=ORCHESTRATOR_INSTRUCTIONS,
+        max_steps=8,
+        verbosity_level=AGENT_VERBOSITY,
+        step_callbacks=[show_agent_progress],
+    )
+    advisor_agent = ToolCallingAgent(
+        tools=[get_financial_report, get_transaction_summary],
+        model=model,
+        name="business_advisor_agent",
+        instructions=ADVISOR_AGENT_INSTRUCTIONS,
+        max_steps=5,
+        verbosity_level=AGENT_VERBOSITY,
+        step_callbacks=[show_agent_progress],
+    )
+    return {"orchestrator": orchestrator, "advisor": advisor_agent}
+
+
+def handle_customer_request(orchestrator: ToolCallingAgent, request_with_date: str) -> str:
+    """Run one customer request through the orchestrator, hiding internal failures from the customer."""
+    ACTIVE_ORDER["order_id"] = None  # each request starts a new order session
+    try:
+        return str(orchestrator.run(request_with_date))
+    except Exception as error:
+        print(f"INTERNAL ERROR while handling request: {error}")
+        return ("We're sorry, we could not process your request right now. "
+                "Our team will contact you shortly to complete it.")
 
 
 # Run your test scenarios by writing them here. Make sure to keep track of them.
 
 def run_test_scenarios():
-    
+
     print("Initializing Database...")
-    init_database()
+    init_database(db_engine)
     try:
         quote_requests_sample = pd.read_csv("quote_requests_sample.csv")
         quote_requests_sample["request_date"] = pd.to_datetime(
@@ -639,6 +1432,9 @@ def run_test_scenarios():
     ############
     ############
 
+    agents = build_agent_system(build_model())
+    orchestrator = agents["orchestrator"]
+
     results = []
     for idx, row in quote_requests_sample.iterrows():
         request_date = row["request_date"].strftime("%Y-%m-%d")
@@ -660,7 +1456,7 @@ def run_test_scenarios():
         ############
         ############
 
-        # response = call_your_multi_agent_system(request_with_date)
+        response = handle_customer_request(orchestrator, request_with_date)
 
         # Update state
         report = generate_financial_report(request_date)
@@ -692,8 +1488,20 @@ def run_test_scenarios():
 
     # Save results
     pd.DataFrame(results).to_csv("test_results.csv", index=False)
+
+    # Business advisor review of the whole run
+    print("\n===== BUSINESS ADVISOR RECOMMENDATIONS =====")
+    advice = str(agents["advisor"].run(
+        f"Review the company's performance from 2025-01-01 to {final_date} and recommend improvements."
+    ))
+    print(advice)
+    with open("advisor_report.txt", "w") as advisor_file:
+        advisor_file.write(advice)
+
     return results
 
 
 if __name__ == "__main__":
+    # The starter data files are read with relative paths, so run from this script's folder.
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     results = run_test_scenarios()

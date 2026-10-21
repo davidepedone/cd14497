@@ -1,0 +1,396 @@
+request_id,request_date,cash_balance,inventory_value,response
+1,2025-04-01,45124.7,4875.3,"Dear Customer,
+
+Thank you for your order! Here are the details:
+
+- **Items Confirmed:**
+  - **Glossy paper:** 200 sheets, total $40.00, delivery date April 1, 2025.
+  - **Cardstock (white):** 100 sheets, total $15.00, delivery date April 1, 2025.
+  - **Colored paper (assorted colors):** 100 sheets, total $10.00, delivery date April 1, 2025.
+
+- **Subtotal:** $65.00
+- **Volume Discount:** $0.00 (not applicable)
+- **Rounding Credit:** $0.00 (no rounding needed)
+- **Total Charged:** $65.00
+
+All items will be delivered by April 1, 2025, well before your requested delivery date of April 15, 2025.
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+2,2025-04-03,45180.7,4875.3,"Dear Customer,
+
+Thank you for your order! Here are the details:
+
+**Items Confirmed:**
+- **Poster paper:** 500 sheets, totaling $125.00, with a delivery date of April 7, 2025.
+- **Party streamers:** 300 rolls, totaling $15.00, with a delivery date of April 7, 2025.
+
+**Subtotal:** $140.00  
+**Total Charged:** $140.00  
+**Volume Discount:** 0% (No discounts applied)
+
+**Declined Items:**
+- Balloons: not a product we carry.
+
+Your supplies will be delivered by April 15, 2025. If you have any further questions or need assistance, feel free to reach out.
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+3,2025-04-04,47859.81,4868.45,"Dear Customer,
+
+Thank you for your order. Here are the details:
+
+**Confirmed Items:**
+- 10,000 sheets of A4 paper: $425 (Delivery Date: April 11, 2025)
+- 255,000 sheets of Standard copy paper: $8,670 (Delivery Date: April 11, 2025)
+
+**Subtotal:** $10,700
+**Volume Discount (15%):** -$1,605
+**Total Charged:** $9,095
+
+**Declined Items:**
+- A3 paper: not a product we carry.
+
+Your order has been successfully recorded and will be delivered by April 15, 2025.
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+4,2025-04-05,47925.54,4816.4,"Dear Customer,
+
+Thank you for your order! Here are the details:
+
+- **Items Confirmed:**
+  - **Cardstock:** 500 sheets, total line amount $74.57, delivery date set for 2025-04-09.
+  - **A4 Paper:** 250 sheets, total line amount $12.43, also scheduled for delivery on 2025-04-09.
+
+- **Subtotal:** $87.50
+- **Volume Discount:** 0% (no discount applied)
+- **Rounding Credit:** $0.50
+- **Total Charged:** $87.00
+
+Your order is confirmed for delivery by April 15, 2025. If you have any further questions or need assistance, feel free to reach out.
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+5,2025-04-05,48002.54,4766.4,"Dear Customer,
+
+Thank you for your order! Here are the details:
+
+- **Colored paper**: 500 sheets, total line amount $47.41, delivery date 2025-04-05.
+- **Cardstock**: 300 sheets, total line amount $42.67, delivery date 2025-04-09.
+- **Decorative adhesive tape (washi tape)**: 200 rolls, total line amount $37.92, delivery date 2025-04-09.
+
+**Subtotal**: $135.00  
+**Volume Discount (5%)**: -$6.75  
+**Rounding Credit**: -$0.25  
+**Total Charged**: $128.00  
+
+All items are confirmed for delivery by your requested date of April 15, 2025. There were no declined items in this transaction.
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+6,2025-04-06,48029.34,4766.4,"Dear Customer,
+
+Thank you for your order! Here are the details:
+
+**Items Confirmed:**
+1. **Construction paper**
+   - Quantity: 500 sheets
+   - Line Total: $33.18
+   - Delivery Date: 2025-04-10
+
+2. **Standard copy paper**
+   - Quantity: 300 sheets
+   - Line Total: $11.38
+   - Delivery Date: 2025-04-10
+
+3. **Cardstock**
+   - Quantity: 200 sheets
+   - Line Total: $28.44
+   - Delivery Date: 2025-04-10
+
+**Subtotal:** $77.00
+**Volume Discount (5%):** -$3.85
+**Rounding Credit:** -$0.15
+**Total Charged:** $73.00
+
+All items are scheduled to be delivered by April 10, 2025, which is before your requested delivery date of April 15, 2025.
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+7,2025-04-07,48451.14,4418.400000000001,"Dear Customer,
+
+Thank you for your order for the upcoming exhibition. We are pleased to confirm the following items:
+
+- **Glossy paper**: 500 sheets, total line amount $94.92, delivery date 2025-04-11.
+- **Matte paper**: 1000 sheets, total line amount $170.85, delivery date 2025-04-11.
+- **Large poster paper (24x36 inches)**: 300 sheets, total line amount $284.75, delivery date 2025-04-07.
+- **Cardstock**: 200 sheets, total line amount $28.48, delivery date 2025-04-11.
+
+**Subtotal**: $610.00  
+**Volume Discount**: 5% applied, amounting to $30.50.  
+**Rounding Credit**: $0.50, rounding the total down to your favor.  
+**Total Charged**: $579.00.
+
+There were no declined items in this transaction. All items are confirmed for delivery by your requested date of April 15, 2025.
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+8,2025-04-07,48669.84,4413.900000000001,"Dear Customer,
+
+Thank you for your order of paper supplies for your upcoming ceremony. Here are the details of your order:
+
+### Confirmed Items:
+- **Glossy paper**: 500 sheets, total $90.00, delivery date April 11, 2025.
+- **Matte paper**: 1000 sheets, total $162.00, delivery date April 11, 2025.
+- **Colored paper**: 2000 sheets, total $180.00, delivery date April 14, 2025.
+- **Recycled paper**: 3000 sheets, total $216.00, delivery date April 14, 2025.
+
+### Pricing Summary:
+- **Subtotal**: $720.00
+- **Volume Discount (10%)**: -$72.00
+- **Total Charged**: $648.00
+
+All items are confirmed for delivery by your requested date of April 15, 2025. There were no declined items in this transaction.
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+9,2025-04-07,48686.38999999999,4407.150000000001,"Dear Customer,
+
+Thank you for your order! Here are the details:
+
+**Items Ordered:**
+1. **A4 White Printer Paper:** 200 sheets, total line amount $9.85, delivery date 2025-04-08.
+2. **A3 Glossy Paper:** 100 sheets, total line amount $19.69, delivery date 2025-04-07.
+3. **100% Recycled Kraft Paper Envelopes:** 50 packets, total line amount $2.46, delivery date 2025-04-08.
+
+**Subtotal:** $32.50  
+**Volume Discount:** 0% (no discount applied)  
+**Rounding Credit:** $0.50  
+**Total Charged:** $32.00  
+
+All items are scheduled for delivery by your requested date of April 10, 2025.
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+13,2025-04-08,48711.70999999999,4384.95,"Dear Customer,
+
+Thank you for your order. Here are the details:
+
+- **Item Confirmed:** 200 sheets of Cardstock
+- **Line Total:** $30.00
+- **Delivery Date:** April 9, 2025
+
+**Subtotal:** $30.00  
+**Volume Discount:** $0.00 (No discounts applied)  
+**Total Charged:** $30.00  
+
+Please note that the order for 500 sheets of A4 printing paper could not be fulfilled by the requested delivery date. The earliest possible delivery for this item is April 12, 2025.
+
+If you have any further questions or need assistance, feel free to reach out.
+
+Best regards,  
+Beaver's Choice Paper Company - Customer Service"
+12,2025-04-08,48719.189999999995,4407.150000000001,"Dear Customer,
+
+Thank you for your order! Here are the details:
+
+- **Cardstock**: 200 sheets, total $30.00, delivery date April 12, 2025.
+- **Standard copy paper**: 500 sheets, total $20.00, delivery date April 12, 2025.
+- **Paper napkins**: 100 units, total $2.00, delivery date April 9, 2025.
+
+**Subtotal**: $52.00
+**Total Charged**: $52.00
+
+There were no declined items in this transaction.
+
+Your items are confirmed for delivery by April 15, 2025. 
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+10,2025-04-08,48777.189999999995,4407.150000000001,"Dear Customer,
+
+Thank you for your order! Here are the details:
+
+- **Glossy Paper**: 500 sheets, totaling $100.00, with a delivery date of April 12, 2025.
+- **Cardstock**: 300 sheets, totaling $45.00, with a delivery date of April 12, 2025.
+
+**Subtotal**: $145.00
+**Total Charged**: $145.00
+
+There were no declined items in this transaction.
+
+Your supplies will be delivered by April 12, 2025, ahead of your requested deadline of April 15, 2025.
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+11,2025-04-08,48838.78999999999,4407.150000000001,"Dear Customer,
+
+Thank you for your order! Here are the details:
+
+- **Items Confirmed:**
+  - **Glossy Paper:** 500 sheets, Line Total: $100.00, Delivery Date: 2025-04-12
+  - **Matte Paper:** 300 sheets, Line Total: $54.00, Delivery Date: 2025-04-12
+
+- **Subtotal:** $154.00
+- **Volume Discount:** None applied (0.0%)
+- **Rounding Credit:** None (0.0)
+- **Total Charged:** $154.00
+
+Your supplies are scheduled for delivery by April 12, 2025, which meets your requirement for April 15, 2025.
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+14,2025-04-09,48868.78999999999,4407.150000000001,"Dear Customer,
+
+Thank you for your order. Here are the details:
+
+- **Confirmed Item:** 500 sheets of Cardstock
+  - **Line Total:** $75.00
+  - **Delivery Date:** April 13, 2025
+
+**Subtotal:** $75.00  
+**Volume Discount:** $0.00 (No discounts applied as the order did not meet the volume thresholds)  
+**Total Charged:** $75.00  
+
+Unfortunately, the following items could not be fulfilled:
+- **A4 paper:** This quantity cannot be delivered by the requested date (earliest possible delivery: April 16, 2025).
+- **Poster paper:** This quantity cannot be delivered by the requested date (earliest possible delivery: April 16, 2025).
+
+If you have any further questions or need assistance, please feel free to reach out.
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+15,2025-04-12,48868.78999999999,4407.150000000001,"Dear Customer,
+
+Thank you for your order request for high-quality paper supplies. Unfortunately, we regret to inform you that none of the requested items can be delivered by your requested date of April 15, 2025. Below are the details regarding each item:
+
+1. **A4 paper**: Requested 10,000 sheets. This quantity cannot be delivered by the requested date as the earliest possible delivery from our supplier is April 19, 2025.
+
+2. **Colored paper**: Requested 5,000 sheets (assorted colors). Similar to the A4 paper, this quantity cannot be delivered by the requested date, with the earliest delivery also being April 19, 2025.
+
+3. **Cardstock**: Requested 500 reams. Unfortunately, this quantity cannot be delivered by the requested date as well, with the earliest delivery being April 19, 2025.
+
+We apologize for any inconvenience this may cause and appreciate your understanding. If you have any further questions or would like to adjust your order, please feel free to reach out.
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+16,2025-04-13,48968.78999999999,4307.150000000001,"Dear Customer,
+
+Thank you for your order. Here are the details:
+
+**Items Confirmed for Delivery:**
+- 100 sheets of Large poster paper (24x36 inches)
+  - **Line Total:** $100.00
+  - **Delivery Date:** April 13, 2025
+
+**Subtotal:** $100.00
+**Total Charged:** $100.00
+
+**Declined Items:**
+1. **A4 paper** - Reason: This quantity cannot be delivered by the requested date (earliest possible delivery: April 17, 2025).
+2. **Construction paper** - Reason: This quantity cannot be delivered by the requested date (earliest possible delivery: April 17, 2025).
+
+Thank you for choosing Beaver's Choice Paper Company!
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+17,2025-04-14,49018.78999999999,4257.150000000001,"Dear Customer,
+
+Thank you for your order. We are pleased to confirm the sale of 500 paper plates, which will be delivered by April 14, 2025. The total charged for this order is $50.00.
+
+**Order Summary:**
+- **Item:** Paper plates
+- **Quantity:** 500
+- **Total Charged:** $50.00
+- **Delivery Date:** April 14, 2025
+
+Unfortunately, the following items could not be fulfilled due to delivery issues:
+1. **A4 paper** - Reason: This quantity cannot be delivered by the requested date (earliest possible delivery: April 18, 2025).
+2. **Colored paper** - Reason: This quantity cannot be delivered by the requested date (earliest possible delivery: April 18, 2025).
+3. **Paper napkins** - Reason: This quantity cannot be delivered by the requested date (earliest possible delivery: April 21, 2025).
+4. **Paper cups** - Reason: This quantity cannot be delivered by the requested date (earliest possible delivery: April 18, 2025).
+
+If you have any questions or need further assistance, please feel free to reach out.
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+18,2025-04-14,49035.369999999995,4242.849999999999,"Dear Customer,
+
+Thank you for your order placed on April 14, 2025. We are pleased to confirm the following:
+
+- **Item Confirmed:** 200 sheets of colored paper
+  - **Delivery Date:** April 15, 2025
+  - **Line Total:** $20.00
+
+### Order Summary:
+- **Subtotal:** $20.00
+- **Volume Discount:** $0.00 (No discounts applied)
+- **Total Charged:** $20.00
+
+Unfortunately, we were unable to fulfill the following items due to delivery issues:
+- **Cardstock:** This quantity cannot be delivered by the requested date (earliest possible delivery: April 18, 2025).
+- **Standard copy paper:** This quantity cannot be delivered by the requested date (earliest possible delivery: April 18, 2025).
+
+If you have any further questions or need assistance with alternative options, please feel free to reach out.
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+19,2025-04-15,49087.369999999995,4242.849999999999,"Dear Customer,
+
+Thank you for your order. Here are the details:
+
+- **Confirmed Item:** 1000 sheets of Cardstock
+  - **Line Total:** $142.00
+  - **Delivery Date:** April 19, 2025
+
+### Pricing Summary:
+- **Subtotal:** $150.00
+- **Volume Discount (5%):** -$7.50
+- **Rounding Credit:** -$0.50
+- **Total Charged:** $142.00
+
+### Declined Items:
+- **Glossy Paper:** This quantity cannot be delivered by the requested date (earliest possible delivery: April 22, 2025).
+- **Matte Paper:** This quantity cannot be delivered by the requested date (earliest possible delivery: April 22, 2025).
+
+We appreciate your understanding and look forward to serving you again.
+
+Best regards,
+Beaver's Choice Paper Company - Customer Service"
+20,2025-04-17,49312.369999999995,4242.849999999999,"Dear Customer,
+
+Thank you for your order! We are pleased to confirm the following details:
+
+- **Item:** 5,000 Flyers  
+- **Delivery Date:** April 24, 2025  
+- **Subtotal:** $750.00  
+- **Volume Discount:** 10% applied ($75.00 off)  
+- **Total Charged:** $675.00  
+
+Please note that your requests for posters and tickets could not be fulfilled as these items are not products we carry.
+
+If you have any further questions or need assistance with anything else, feel free to reach out.
+
+Best regards,  
+Beaver's Choice Paper Company - Customer Service"
